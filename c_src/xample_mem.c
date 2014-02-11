@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 
 #include "xample.h"
 
@@ -70,7 +71,7 @@ xample_t* xample_open(char* name, sample_t** data)
 	return NULL;
     }
 
-    if ((fd=shm_open(name, O_RDONLY)) < 0) {
+    if ((fd=shm_open(name, O_RDONLY, 0)) < 0) {
 	perror("shm_open");
 	return NULL;
     }
