@@ -24,11 +24,11 @@
 #define SPI_DEV "/dev/spidev0.0"
 
 static int spi_fd = -1;
-static uint32_t speed = SPI_SPEED;
 
 int open_spi(void)
 {
     uint8_t  mode = SPI_MODE_0;
+    uint32_t speed = SPI_SPEED;
 
     if ((spi_fd= open(SPI_DEV, O_RDWR)) < 0) {
 	perror("open spi");
@@ -70,7 +70,7 @@ sample_t read_sample_spi(int channel)
 	.rx_buf = (unsigned long)rx,
 	.len = ARRAY_SIZE(tx),
 	.delay_usecs = 0,
-	.speed_hz = speed,
+	.speed_hz = SPI_SPEED,
 	.bits_per_word = 8,
     };
     r = ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr);
