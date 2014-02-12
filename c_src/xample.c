@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <math.h>
 #include <sys/time.h>
 #include <sys/mman.h>
@@ -23,10 +24,10 @@
 #define SPI_DEV "/dev/spidev0.0"
 
 static int spi_fd = -1;
+static uint32_t speed = SPI_SPEED;
 
 int open_spi(void)
 {
-    uint32_t speed = SPI_SPEED;
     uint8_t  mode = SPI_MODE_0;
 
     if ((spi_fd= open(SPI_DEV, O_RDWR)) < 0) {
