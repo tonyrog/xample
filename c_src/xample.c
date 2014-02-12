@@ -21,8 +21,8 @@
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 #define SPI_SPEED 2500000 // SPI frequency clock
-#define SPI_DEV "/dev/spidev0.0"
 
+static char* spi_dev = "/dev/spidev0.0";
 static int spi_fd = -1;
 
 int open_spi(void)
@@ -30,7 +30,7 @@ int open_spi(void)
     uint8_t  mode = SPI_MODE_0;
     uint32_t speed = SPI_SPEED;
 
-    if ((spi_fd= open(SPI_DEV, O_RDWR)) < 0) {
+    if ((spi_fd= open(spi_dev, O_RDWR)) < 0) {
 	perror("open spi");
 	return -1;
     }
@@ -153,19 +153,10 @@ int main(int argc, char** argv)
     double sample_freq = 1000.0;  // default = 1K HZ
     int i, f, opt;
     size_t fdivpow2 = 2;    // 0 => 2^0 = 1 => frame_size = page_size 
-    sample_t (*read_sample_fn)(int channel) = read_sample_sim;
+    sample_t (*read_sample_fn)(int channel) = NULL;
     struct timeval t0, t1;
 
-
-#if defined(__linux__) && defined(MCP3202)
-    open_spi();
-    if (spi_fd >= 0) {
-	read_sample_fn = read_sample_spi;
-	printf("spi device %s is open\n" SPI_DEV);
-    }
-#endif
-
-    while ((opt = getopt(argc, argv, "sf:t:d:")) != -1) {
+    while ((opt = getopt(argc, argv, "sf:t:d:i:")) != -1) {
 	switch(opt) {
 	case 'f':
 	    sample_freq = atof(optarg);  // sample frequency
@@ -176,10 +167,15 @@ int main(int argc, char** argv)
 	case 'd':
 	    fdivpow2 = atoi(optarg);
 	    break;
-	case 's':
+	case 'i':
 #if defined(__linux__) && defined(MCP3202)
-	    close_spi();
+	  if (atoi(optarg) == 1)
+	    spi_dev = "/dev/spidev0.1";
+	  else
+	    spi_dev = "/dev/spidev0.0";
+	  break;
 #endif
+	case 's':
 	    read_sample_fn = read_sample_sim;
 	    break;
 	default: /* '?' */
@@ -190,6 +186,15 @@ int main(int argc, char** argv)
     if (optind >= argc)
 	usage(argv[0]);
 
+#if defined(__linux__) && defined(MCP3202)
+    if (read_sample_fn == NULL) {
+      open_spi();
+      if (spi_fd >= 0) {
+	read_sample_fn = read_sample_spi;
+	printf("spi device %s is open\n", spi_dev);
+      }
+    }
+#endif
     max_samples = (size_t)(sample_freq*sample_time);
     udelay = ((unsigned long)(1000000*(1/sample_freq)));
     
@@ -264,6 +269,7 @@ int main(int argc, char** argv)
 		
 		td = (t1.tv_sec-t0.tv_sec)*1000000+(t1.tv_usec-t0.tv_usec);
 		printf("Hz = %f\n", ((double)nsamples/(double) td)*1000000.0);
+		printf("last_sample = %u\n", s);
 	    }
 	    i = 0;
 	    if (current_frame >= last_frame) {
