@@ -9,7 +9,6 @@
 #include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <endian.h>
 #include <sys/mman.h>
 #include "xample.h"
 
@@ -38,7 +37,7 @@ size_t file_write_uint32(uint32_t value, wav_file_t* wf)
 size_t file_write_samples(sample_t* vec, size_t n, wav_file_t* wf)
 {
     size_t r = 0;
-# if __BYTE_ORDER == __LITTLE_ENDIAN
+#if __BYTE_ORDER == __LITTLE_ENDIAN
     r = fwrite(vec, n, sizeof(sample_t), wf->f);
 #else
     int i;

@@ -27,13 +27,15 @@ xample_t* xample_create(char* name, size_t nsamples, size_t nchannels,
     }
     buffer_size = nsamples*nchannels*sizeof(sample_t);
     real_size = (((buffer_size+page_size-1)/page_size)+1)*page_size;
+
+    // start with trying unlink the segment (delete old one)
     
-    if ((fd=shm_open(name, O_CREAT| O_RDWR, mode)) < 0) {
-	shm_unlink(name);
-	if ((fd=shm_open(name, O_CREAT| O_RDWR, mode)) < 0) {
-	    perror("shm_open");
-	    return NULL;
-	}
+    if (shm_unlink(name) < 0) {
+	perror("shm_unlink"); // normally ok if exited nice?
+    }
+    if ((fd=shm_open(name, O_CREAT | O_RDWR, mode)) < 0) {
+	perror("shm_open");
+	return NULL;
     }
     if (ftruncate(fd, real_size) < 0) {
 	perror("ftruncate");

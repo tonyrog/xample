@@ -11,13 +11,16 @@
 
 #include "xample.h"
 
-double sample_freq = 1000.0;
+double sample_freq = 10000.0;
+
+#define AMPLITUDE   5000.0
+#define OFFSET      3000
 
 sample_t read_sample(void)
 {
     static double x = 0.0;
-    long v = 1000 + 1000*sin(x*2*M_PI);
-    x += 1/10000.0;
+    long v = 32767 + OFFSET + AMPLITUDE*sin(x*2*M_PI);
+    x += 1/50.0;
     if (x >= 1.0) x = 0.0;
     return (sample_t) v;
 }

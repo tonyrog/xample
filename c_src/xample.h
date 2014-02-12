@@ -1,6 +1,21 @@
 
 #ifndef __XAMPLE_H__
 
+#ifdef __APPLE__
+#include <machine/endian.h>
+
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+#define htole16(x) (x)
+#define htole32(x) (x)
+#else
+#define htole16(x) __DARWIN_OSSwapInt16((x))
+#define htole32(x) __DARWIN_OSSwapInt32((x))
+#endif
+
+#else
+#include <endian.h>
+#endif
+
 
 typedef uint16_t sample_t;
 
