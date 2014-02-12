@@ -11,10 +11,12 @@
 
 #include "xample.h"
 
-xample_t* xample_create(char* name, size_t nsamples, size_t nchannels,
+xample_t* xample_create(char* name, size_t nsamples, size_t fdivpow2,
+			size_t nchannels,
 			double rate, mode_t mode, sample_t** data)
 {
     size_t page_size;
+    size_t frame_size;
     size_t buffer_size;
     size_t real_size;
     void* ptr;
@@ -27,6 +29,7 @@ xample_t* xample_create(char* name, size_t nsamples, size_t nchannels,
     }
     buffer_size = nsamples*nchannels*sizeof(sample_t);
     real_size = (((buffer_size+page_size-1)/page_size)+1)*page_size;
+    frame_size = page_size / (1 << fdivpow2);
 
     // start with trying unlink the segment (delete old one)
     
@@ -55,6 +58,14 @@ xample_t* xample_create(char* name, size_t nsamples, size_t nchannels,
     xp->last_page    = (real_size/page_size)-2;
     xp->page_size    = page_size;
     xp->samples_per_page = page_size / sizeof(sample_t);
+
+    xp->current_frame = 0;
+    xp->first_frame   = 0;
+    xp->last_frame    = (real_size/frame_size)-2;
+    xp->frame_size    = frame_size;
+    xp->samples_per_frame = frame_size / sizeof(sample_t);
+    xp->frames_per_page = (1 << fdivpow2);
+
     xp->rate         = (unsigned long) (rate*256);
     xp->channels     = nchannels;
     *data = (sample_t*) (ptr + page_size);

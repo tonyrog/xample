@@ -113,11 +113,11 @@ void update_data(state_t* sp)
 			 GRID_WIDTH, GRID_HEIGHT, 0);
 }
 
-void draw_samples(state_t* sp, xample_t* xp, unsigned long page,
+void draw_samples(state_t* sp, xample_t* xp, unsigned long frame,
 		  sample_t* sample_buffer)
 {
-    unsigned long samples_per_page = xp->samples_per_page;
-    int page_offset = page * samples_per_page;
+    unsigned long samples_per_frame = xp->samples_per_frame;
+    int frame_offset = frame * samples_per_frame;
     int x = GRID_LEFT;
     int i = 0;
 
@@ -126,9 +126,9 @@ void draw_samples(state_t* sp, xample_t* xp, unsigned long page,
 			 0, 0, GRID_LEFT, GRID_TOP,
 			 GRID_WIDTH, GRID_HEIGHT, 0);
     
-    // just draw one page for now
-    while((i < samples_per_page) && (i < GRID_WIDTH)) {
-	int ys = (65535-sample_buffer[page_offset+i]);
+    // just draw one frame for now
+    while((i < samples_per_frame) && (i < GRID_WIDTH)) {
+	int ys = (65535-sample_buffer[frame_offset+i]);
 	int y;
 	
 	y = GRID_TOP + ((ys*GRID_HEIGHT) >> 16);
@@ -147,7 +147,7 @@ int main(int argc, char** argv)
     state_t s;
     xample_t* xp;
     sample_t* sample_buffer;
-    unsigned long page;
+    unsigned long frame;
     
     memset(&s, 0, sizeof(s));
 
@@ -167,16 +167,16 @@ int main(int argc, char** argv)
 
     update_window(&s);
 
-    page = xp->current_page;
+    frame = xp->current_frame;
 
     while(1) {
 	epx_event_t e;
 
-	if (page != xp->current_page) {
-	    unsigned next_page = xp->current_page;
+	if (frame != xp->current_frame) {
+	    unsigned next_frame = xp->current_frame;
 	    // draw data in current_page
-	    draw_samples(&s, xp, page, sample_buffer);
-	    page = next_page;
+	    draw_samples(&s, xp, frame, sample_buffer);
+	    frame = next_frame;
 	}
 
 	if (epx_backend_event_read(s.be, &e) > 0) {
