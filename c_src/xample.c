@@ -159,7 +159,10 @@ int main(int argc, char** argv)
 
 #if defined(__linux__) && defined(MCP3202)
     open_spi();
-    if (spi_fd >= 0) read_sample_fn = read_sample_spi;
+    if (spi_fd >= 0) {
+	read_sample_fn = read_sample_spi;
+	printf("spi device %s is open\n" SPI_DEV);
+    }
 #endif
 
     while ((opt = getopt(argc, argv, "sf:t:d:")) != -1) {
@@ -198,8 +201,7 @@ int main(int argc, char** argv)
 	exit(1);
     }
 
-    rate         = (xp->rate >> 8) + (xp->rate & 0xff)/256.0;
-
+    rate = (xp->rate >> 8) + (xp->rate & 0xff)/256.0;
 
     // general
     printf("rate = %f\n",       rate);
