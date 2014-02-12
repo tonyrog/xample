@@ -132,7 +132,7 @@ void draw_samples(state_t* sp, xample_t* xp, unsigned long frame,
 	int y;
 	
 	y = GRID_TOP + ((ys*GRID_HEIGHT) >> 16);
-	epx_pixmap_put_pixel(sp->px, x, y, 0, epx_pixel_red);
+	epx_pixmap_put_pixel(sp->px, x, y, 0, epx_pixel_black);
 	i++;
 	x++;
     }

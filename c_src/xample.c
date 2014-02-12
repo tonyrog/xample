@@ -13,16 +13,32 @@
 
 double sample_freq = 10000.0;
 
-#define AMPLITUDE   5000.0
-#define OFFSET      3000
+#define MAX_AMPLITUDE  20000.0
+#define MIN_AMPLITUDE  1000.0
+#define OFFSET      3000.0
 
 sample_t read_sample(void)
 {
     static double x = 0.0;
-    long v = 32767 + OFFSET + AMPLITUDE*sin(x*2*M_PI);
-    x += 1/50.0;
+    static double ax = 0.0;
+    static double ad = 0.01;
+    double vf;
+
+    vf = (MIN_AMPLITUDE + ax*(MAX_AMPLITUDE-MIN_AMPLITUDE))*sin(x*2*M_PI);
+    vf += OFFSET;
+    
+    ax += ad;
+    if (ax < 0.0) {
+	ax = 0.0;
+	ad = -ad;
+    }
+    else if (ax >= 1.0) {
+	ax = 1.0;
+	ad = -ad;
+    }
+    x += 0.01;
     if (x >= 1.0) x = 0.0;
-    return (sample_t) v;
+    return (sample_t) (32767+(long)vf);
 }
 
 int main(int argc, char** argv)
