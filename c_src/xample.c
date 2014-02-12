@@ -12,7 +12,8 @@
 
 #include "xample.h"
 
-#if defined(__linux__) && defined(MCP3202)
+#if defined(__linux__)
+#define MCP3202
 #include <sys/ioctl.h>
 #include <linux/types.h>
 #include <linux/spi/spidev.h>
@@ -96,6 +97,7 @@ sample_t read_sample_sim(int channel)
     case 1: xi = 1.0*M_PI/4.0; break;
     case 2: xi = 2.0*M_PI/4.0; break;
     case 3: xi = 3.0*M_PI/4.0; break;
+    default: xi = 0.0; break;
     }
 
     x += channel*M_PI;
