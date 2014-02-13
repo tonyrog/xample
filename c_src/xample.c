@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -61,9 +62,8 @@ void close_spi(void)
 sample_t read_sample_spi(int channel) 
 {
     sample_t v;
-    int r;
     char  rx[3];
-    uint16_t tx[] = {1,(2+channel)<<6,0,};
+    uint8_t tx[] = {1,(2+channel)<<6,0,};
 
     struct spi_ioc_transfer tr = {
 	.tx_buf = (unsigned long)tx,
@@ -73,10 +73,44 @@ sample_t read_sample_spi(int channel)
 	.speed_hz = SPI_SPEED,
 	.bits_per_word = 8,
     };
-    r = ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr);
+    if (ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr) < 0)
+      return 0;
     v = ((rx[1]&0x0F) << 8) + rx[2]; // 4+8=12 bits = 4096
     // based on 3.3V supply
     return v << 4;  // scale to 16 bit
+}
+
+//  read n (interleaved) samples
+int read_n_samples_spi(int chan0, int chan1, uint16_t delay,
+		       sample_t* samples, size_t n)
+{
+  uint8_t rx[3*256];
+  uint8_t tx[3*256];
+  struct spi_ioc_transfer tr[256];
+  int i, j;
+
+  if (n > 256) 
+    n = 256;
+
+  for (i = 0, j=0; i < n; i++, j+=3) {
+    tx[j+0] = 1;
+    tx[j+1] = (i & 1) ? ((2+chan1) << 6) : ((2+chan0)<<6);
+    tx[j+2] = 0;
+
+    tr[i].tx_buf = (unsigned long) &tx[j];
+    tr[i].rx_buf = (unsigned long) &rx[j];
+    tr[i].len = 3;
+    tr[i].len = 3;
+    tr[i].delay_usecs = delay;
+    tr[i].speed_hz = SPI_SPEED;
+    tr[i].bits_per_word = 8;
+    tr[i].cs_change = 1;
+  }
+  if (ioctl(spi_fd, SPI_IOC_MESSAGE(n), &tr) < 0)
+    return 0;
+  for (i = 0, j=0; i < n; i++,j+=3)
+    samples[i] = (((rx[j+1] & 0xf)<<8) + rx[j+2])<<4;
+  return n;
 }
 
 #endif
@@ -119,6 +153,17 @@ sample_t read_sample_sim(int channel)
     return (sample_t) (32767+(long)vf);
 }
 
+int read_n_samples_sim(int chan0, int chan1, uint16_t delay,
+		       sample_t* samples, size_t n)
+{
+  int i;
+
+  for (i = 0; i < n; i++) {
+    samples[i] = read_sample_sim((i & 1) ? chan1 : chan0);
+    usleep(delay);  // fixme: pace this
+  }
+  return n;
+}
 
 void usage(char* prog)
 {
@@ -143,7 +188,7 @@ int main(int argc, char** argv)
     // unsigned long first_page_offset;
     unsigned long first_frame_offset;
     unsigned long frame_offset;
-    unsigned long frames_per_page;
+    size_t frames_per_page;
     unsigned long udelay;
     unsigned long nsamples = 0;
     long sample_time = 5;
@@ -153,10 +198,12 @@ int main(int argc, char** argv)
     double sample_freq = 1000.0;  // default = 1K HZ
     int i, f, opt;
     size_t fdivpow2 = 2;    // 0 => 2^0 = 1 => frame_size = page_size 
-    sample_t (*read_sample_fn)(int channel) = NULL;
+    // sample_t (*read_sample_fn)(int channel) = NULL;
+    int (*read_n_samples_fn)(int, int, uint16_t, sample_t*, size_t) = NULL;
     struct timeval t0, t1;
+    int chunk_size = 10;  // read 10 sample per round
 
-    while ((opt = getopt(argc, argv, "sf:t:d:i:")) != -1) {
+    while ((opt = getopt(argc, argv, "sf:t:d:i:c:")) != -1) {
 	switch(opt) {
 	case 'f':
 	    sample_freq = atof(optarg);  // sample frequency
@@ -167,6 +214,13 @@ int main(int argc, char** argv)
 	case 'd':
 	    fdivpow2 = atoi(optarg);
 	    break;
+	case 'c':
+	  chunk_size = atoi(optarg);
+	  if (chunk_size <= 0) 
+	    chunk_size = 1;
+	  else if (chunk_size > 256)
+	    chunk_size = 256;
+	  break;
 	case 'i':
 #if defined(__linux__) && defined(MCP3202)
 	  if (atoi(optarg) == 1)
@@ -176,8 +230,8 @@ int main(int argc, char** argv)
 	  break;
 #endif
 	case 's':
-	    read_sample_fn = read_sample_sim;
-	    break;
+	  read_n_samples_fn = read_n_samples_sim;
+	  break;
 	default: /* '?' */
 	    usage(argv[0]);
 	}
@@ -187,10 +241,10 @@ int main(int argc, char** argv)
 	usage(argv[0]);
 
 #if defined(__linux__) && defined(MCP3202)
-    if (read_sample_fn == NULL) {
+    if (read_n_samples_fn == NULL) {
       open_spi();
       if (spi_fd >= 0) {
-	read_sample_fn = read_sample_spi;
+	read_n_samples_fn = read_n_samples_spi;
 	printf("spi device %s is open\n", spi_dev);
       }
     }
@@ -209,9 +263,10 @@ int main(int argc, char** argv)
     rate = (xp->rate >> 8) + (xp->rate & 0xff)/256.0;
 
     // general
-    printf("rate = %f\n",       rate);
-    printf("udelay = %ld\n", udelay);
-    printf("max_samples = %ld\n", max_samples);
+    printf("rate = %f\n", rate);
+    printf("udelay = %lu\n", udelay);
+    printf("max_samples = %zu\n", max_samples);
+    printf("chunk_size = %zu\n",  chunk_size);
    
     // page info
     current_page = xp->current_page;
@@ -223,7 +278,7 @@ int main(int argc, char** argv)
     printf("first_page = %lu\n", first_page);
     printf("last_page = %lu\n",  last_page);
     printf("current_page = %lu\n", current_page);
-    printf("samples_per_page = %ld\n", samples_per_page);
+    printf("samples_per_page = %zu\n", samples_per_page);
     
     // frame info
     current_frame = xp->current_frame;
@@ -236,8 +291,8 @@ int main(int argc, char** argv)
     printf("first_frame = %lu\n", first_frame);
     printf("last_frame = %lu\n",  last_frame);
     printf("current_frame = %lu\n", current_frame);
-    printf("samples_per_frame = %ld\n", samples_per_frame);
-    printf("frames_per_page = %ld\n", frames_per_page);
+    printf("samples_per_frame = %zu\n", samples_per_frame);
+    printf("frames_per_page = %zu\n", frames_per_page);
 
     first_frame_offset = first_frame*samples_per_frame;
     // first_page_offset = first_page*samples_per_page;
@@ -250,38 +305,49 @@ int main(int argc, char** argv)
     gettimeofday(&t0, NULL);
 
     while(1) {
-	sample_t s = (*read_sample_fn)(0);
-	sample_buffer[frame_offset + i] = s;
-	i++;
-	if (i >= samples_per_frame) {
-	    nsamples += samples_per_frame;
-	    f++;
-	    if (f >= frames_per_page) {
-		long td;
-		if (current_page >= last_page)
-		    current_page = first_page;
-		else
-		    current_page++;
-		f = 0;
-		xp->current_page  = current_page;
+      int ns = chunk_size;
+      int remain = samples_per_frame - i;
+      sample_t last_sample;
+      uint16_t delay;
 
-		gettimeofday(&t1, NULL);
-		
-		td = (t1.tv_sec-t0.tv_sec)*1000000+(t1.tv_usec-t0.tv_usec);
-		printf("Hz = %f\n", ((double)nsamples/(double) td)*1000000.0);
-		printf("last_sample = %u\n", s);
-	    }
-	    i = 0;
-	    if (current_frame >= last_frame) {
-		current_frame = first_frame;
-		frame_offset  = first_frame_offset;
-	    }
-	    else {
-		current_frame++;
-		frame_offset += samples_per_frame;
-	    }
-	    xp->current_frame = current_frame;
+      if  (ns > remain)
+	ns = remain;
+      delay = (udelay > 65535) ? 65535 : udelay;
+      read_n_samples_fn(0, 0, delay, sample_buffer+frame_offset+i, ns);
+      i += ns;
+      last_sample = sample_buffer[frame_offset+i-1];
+
+      if (i >= samples_per_frame) {
+	nsamples += samples_per_frame;
+	f++;
+	if (f >= frames_per_page) {
+	  long td;
+	  if (current_page >= last_page)
+	    current_page = first_page;
+	  else
+	    current_page++;
+	  f = 0;
+	  xp->current_page  = current_page;
+	  
+	  gettimeofday(&t1, NULL);
+	  
+	  td = (t1.tv_sec-t0.tv_sec)*1000000+(t1.tv_usec-t0.tv_usec);
+	  printf("Hz = %f\n", ((double)nsamples/(double) td)*1000000.0);
+	  printf("last_sample = %u\n", last_sample);
+	  nsamples = 0;
+	  t0 = t1;
 	}
-	usleep(udelay);
+	i = 0;
+	if (current_frame >= last_frame) {
+	  current_frame = first_frame;
+	  frame_offset  = first_frame_offset;
+	}
+	else {
+	  current_frame++;
+	  frame_offset += samples_per_frame;
+	}
+	xp->current_frame = current_frame;
+      }
+      // usleep(udelay);
     }
 }
