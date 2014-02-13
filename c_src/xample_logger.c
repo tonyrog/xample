@@ -12,6 +12,9 @@
 #include <sys/mman.h>
 #include "xample.h"
 
+#define DEF_MAX_SAMPLES  (1024*1024) // 1M samples
+#define DEF_MAX_TIME     60.0        // one minute of samples per file
+
 typedef struct _wav_file_t {
     FILE* f;
     char* name;
@@ -138,6 +141,108 @@ size_t page_align(size_t v, int page_size)
     return ((v + page_size - 1) / page_size)*page_size;
 }
 
+// parse a trigger expression and store in t
+// simple trigger expession,  all parts are optional
+//    "u:<unsigned>:l:<unsigned>:d:<unsigned>:p:<unsigned>:n:<unsigned>"
+// u trigger on above upper limit 
+// l trigger on below lower limit 
+// d trigger on delta
+// p trigger on positive delta (raising)
+// n trigger on negative delta (falling)
+//
+int parse_unsigned(char** pptr, unsigned long* val)
+{
+    unsigned long v = 0;
+    int n = 0;
+    char* ptr = *pptr;
+
+    while((*ptr >= '0') && (*ptr <= '9')) {
+	v = v*10 + (*ptr - '0');
+	n++;
+	ptr++;
+    }
+    *val  = v;
+    *pptr = ptr;
+    return n;
+}
+
+int parse_trigger(char* expr, trigger_t* t)
+{
+    int n;
+    unsigned long* argp;
+    unsigned char m;
+
+    if (!expr || !t) return -1;
+
+    memset(t, 0, sizeof(trigger_t));
+
+again:
+    switch(*expr) {
+    case 'u':
+	argp = &t->upper_limit; 
+	m = UPPER_LIMIT_EXCEEDED; 
+	break;
+    case 'l':
+	argp = &t->lower_limit; 
+	m = BELOW_LOWER_LIMIT;
+	break;
+    case 'd':
+	argp = &t->delta;
+	m = CHANGED_BY_MORE_THAN_DELTA;
+	break;
+    case 'n':
+	argp = &t->negative_delta;
+	m = CHANGED_BY_MORE_THAN_NEGATIVE_DELTA;
+	break;
+    case 'p':
+	argp = &t->positive_delta;
+	m = CHANGED_BY_MORE_THAN_POSITIVE_DELTA;
+	break;
+    case '\0':
+	return 0;
+    default: 
+	return -1;
+    }
+    if (expr[1] != ':') return -1;
+    expr += 2;
+    if ((n = parse_unsigned(&expr, argp)) == 0)
+	return -1;
+    if ((*expr != ':') && (*expr != '\0'))
+	return -1;
+    if (*expr == ':') expr++;
+    t->mask |= m;
+    goto again;
+}
+
+char* format_trigger(trigger_t* t)
+{
+    static char buffer[1024];
+    char vbuffer[32];
+    
+    buffer[0] = '\0';
+    if (t->mask & UPPER_LIMIT_EXCEEDED) {
+	sprintf(vbuffer, "u:%lu:", t->upper_limit);
+	strcat(buffer, vbuffer);
+    }
+    if (t->mask & BELOW_LOWER_LIMIT) {
+	sprintf(vbuffer, "l:%lu:", t->lower_limit);
+	strcat(buffer, vbuffer);
+    }
+    if (t->mask & CHANGED_BY_MORE_THAN_DELTA) {
+	sprintf(vbuffer, "d:%lu:", t->delta);
+	strcat(buffer, vbuffer);
+    }
+    if (t->mask & CHANGED_BY_MORE_THAN_NEGATIVE_DELTA) {
+	sprintf(vbuffer, "n:%lu:", t->negative_delta);
+	strcat(buffer, vbuffer);
+    }
+    if (t->mask & CHANGED_BY_MORE_THAN_POSITIVE_DELTA) {
+	sprintf(vbuffer, "p:%lu:", t->positive_delta);
+	strcat(buffer, vbuffer);
+    }
+    return buffer;
+}
+
 static inline int eval_trigger(sample_t v, sample_t v0, trigger_t* t)
 {
     unsigned char m = t->mask;
@@ -170,6 +275,30 @@ static inline int eval_trigger(sample_t v, sample_t v0, trigger_t* t)
     return r;
 }
 
+void usage(char* prog)
+{
+    printf("usage: %s [options] <shm-name>\n", prog);
+    printf("  [-t <secs>]       max time in seconds per log file\n"
+	   "  [-n <num>]        max number of samples per log file\n"
+	   "  [-d <dir>]        log directory (default is current dir)\n"
+
+	   "  [-s <trigger>]    start trigger\n"
+	   "  [-e <trigger>]    end trigger\n"
+	   "\n"
+	   " trigger expression:\n"
+	   "    [u:<num>] [l:<num>] [d:<num>] [p:<num] [n:<num>]\n"
+           " u trigger on above upper limit\n"
+	   " l trigger on below lower limit\n"
+	   " d trigger on delta\n"
+	   " p trigger on positive delta (raising)\n"
+	   " n trigger on negative delta (falling)\n"
+	   " example: "
+	   " 'u:50000:l:100:d:10' = trigger when above 50000 or below 100 or\n"
+	   "   value change (delta) is more than 10\n"
+	);
+    exit(1);    
+}
+
 
 int main(int argc, char** argv)
 {
@@ -191,39 +320,59 @@ int main(int argc, char** argv)
     size_t max_samples;
     size_t max_samples_t;
     double max_time;
-    char filename[10];   // "xam_i.wav"
-    int  fno = 0;        // 0..9
+    char*   dirname = ".";
+    char   filename[FILENAME_MAX];
+    int    fno = 0;        // 0..9
+    int    opt;
     wav_file_t* wf;
 
-    if (argc < 2) {
-	printf("usage: xample_rd <name>\n");
-	exit(1);
-    }
-
-    if ((xp = xample_open(argv[1], &sample_buffer)) == NULL) {
-	fprintf(stderr, "unable to open %s\n", argv[1]);
-	exit(1);
-    }
-
-    // setup start trigger condition
-    cond1.mask = UPPER_LIMIT_EXCEEDED;
-    cond1.lower_limit = 0;
-    cond1.upper_limit = 100;
-    cond1.positive_delta = 1;
-    cond1.negative_delta = 1;
-    cond1.delta = 1;
-
-    // setup stop trigger condition
-    cond2.mask = BELOW_LOWER_LIMIT;
-    cond2.lower_limit = 10;
-    cond2.upper_limit = 65535;
-    cond2.positive_delta = 1;
-    cond2.negative_delta = 1;
-    cond2.delta = 1;
+    max_samples = DEF_MAX_SAMPLES;  // max 1M per file!
+    max_time    = DEF_MAX_TIME;     // max 1 minutes
     
-    max_samples = 1024*512;  // max 1M per file!
-    max_time    = 60.0*1;    // max 1 minutes
+    // default: always trigger?  > 0 < 1
+    memset(&cond1, 0, sizeof(cond1));
+    memset(&cond2, 0, sizeof(cond2));
+    cond1.mask = UPPER_LIMIT_EXCEEDED | BELOW_LOWER_LIMIT;
+    cond1.upper_limit = 0;
+    cond1.lower_limit = 1;
 
+    while ((opt = getopt(argc, argv, "t:d:n:s:e:")) != -1) {
+	switch(opt) {
+	case 'd':  // set log directory
+	    dirname = optarg;
+	    break;
+	case 't': // max time to log per trigger/file
+	    max_time = atof(optarg);  
+	    break;
+	case 'n': // max number of sample to log per trigger/file
+	    max_samples = atoi(optarg);
+	    break;
+	case 's':  // start trigger
+	    if (parse_trigger(optarg, &cond1) < 0) {
+		fprintf(stderr, "trigger expression error in %s\n", optarg);
+		exit(1);
+	    }
+	    break;
+	case 'e':  // end trigger
+	    if (parse_trigger(optarg, &cond2) < 0) {
+		fprintf(stderr, "trigger expression error in %s\n", optarg);
+		exit(1);
+	    }
+	    break;
+	default:
+	    usage(argv[0]);
+	}
+    }
+
+    if (optind >= argc)
+	usage(argv[0]);
+
+    if ((xp = xample_open(argv[optind], &sample_buffer)) == NULL) {
+	fprintf(stderr, "unable to open shared memory %s\n", argv[optind]);
+	exit(1);
+    }
+
+    
     current_page = xp->current_page;
     first_page   = xp->first_page;
     last_page    = xp->last_page;
@@ -232,12 +381,14 @@ int main(int argc, char** argv)
     rate         = (xp->rate >> 8) + (xp->rate & 0xff)/256.0;
     channels     = xp->channels;
 
-    max_samples_t = rate * max_time;  // sample covering 5 minutes
+    max_samples_t = rate * max_time;
     max_samples_t = page_align(max_samples_t, page_size);
 
     printf("max_time = %f\n", max_time);
     printf("max_samples = %ld\n", max_samples);
     printf("max_samples_t = %ld\n", max_samples_t);
+    printf("start_cond = %s\n", format_trigger(&cond1));
+    printf("end_cond = %s\n", format_trigger(&cond2));
 
     printf("page_size = %ld\n", xp->page_size);
     printf("sample_freq = %f\n", rate);
@@ -281,7 +432,7 @@ int main(int argc, char** argv)
 	    m0 = 0;
 	    size_t written = 0;
 
-	    sprintf(filename, "xam_%d.wav", fno);
+	    sprintf(filename, "%s/xam_%d.wav", dirname, fno);
 	    printf("open %s\n", filename);
 	    if ((wf = file_wav_open(filename, xp)) == NULL) {
 		fprintf(stderr, "unable to open file %s [%s]\n", filename,

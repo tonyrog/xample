@@ -14,6 +14,10 @@
 
 #include "xample.h"
 
+#define MIN_CHUNK_SIZE 1
+#define MAX_CHUNK_SIZE 256
+#define DEF_CHUNK_SIZE 10
+
 #if defined(__linux__)
 #define MCP3202
 #include <sys/ioctl.h>
@@ -201,7 +205,7 @@ int main(int argc, char** argv)
     // sample_t (*read_sample_fn)(int channel) = NULL;
     int (*read_n_samples_fn)(int, int, uint16_t, sample_t*, size_t) = NULL;
     struct timeval t0, t1;
-    int chunk_size = 10;  // read 10 sample per round
+    size_t chunk_size = DEF_CHUNK_SIZE;
 
     while ((opt = getopt(argc, argv, "sf:t:d:i:c:")) != -1) {
 	switch(opt) {
@@ -216,10 +220,10 @@ int main(int argc, char** argv)
 	    break;
 	case 'c':
 	  chunk_size = atoi(optarg);
-	  if (chunk_size <= 0) 
-	    chunk_size = 1;
-	  else if (chunk_size > 256)
-	    chunk_size = 256;
+	  if (chunk_size < MIN_CHUNK_SIZE) 
+	    chunk_size = MIN_CHUNK_SIZE;
+	  else if (chunk_size > MAX_CHUNK_SIZE)
+	    chunk_size = MAX_CHUNK_SIZE;
 	  break;
 	case 'i':
 #if defined(__linux__) && defined(MCP3202)
@@ -256,7 +260,7 @@ int main(int argc, char** argv)
     if ((xp = xample_create(argv[optind], max_samples, fdivpow2, 
 			    1, sample_freq, 0666,
 			    &sample_buffer)) == NULL) {
-	fprintf(stderr, "unable to create shared memory\n");
+	fprintf(stderr, "unable to create shared memory %s\n", argv[optind]);
 	exit(1);
     }
 
