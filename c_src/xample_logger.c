@@ -385,14 +385,14 @@ int main(int argc, char** argv)
     max_samples_t = page_align(max_samples_t, page_size);
 
     printf("max_time = %f\n", max_time);
-    printf("max_samples = %ld\n", max_samples);
-    printf("max_samples_t = %ld\n", max_samples_t);
+    printf("max_samples = %zu\n", max_samples);
+    printf("max_samples_t = %zu\n", max_samples_t);
     printf("start_cond = %s\n", format_trigger(&cond1));
     printf("end_cond = %s\n", format_trigger(&cond2));
 
     printf("page_size = %ld\n", xp->page_size);
     printf("sample_freq = %f\n", rate);
-    printf("samples_per_pages = %ld\n", samples_per_page);
+    printf("samples_per_pages = %zu\n", samples_per_page);
     printf("channels = %lu\n",     channels);
     printf("first_page = %lu\n",   first_page);
     printf("last_page = %lu\n",    last_page);
@@ -462,7 +462,7 @@ int main(int argc, char** argv)
 		}
 		// stop if we have had enough
 		if ((written >= max_samples) || (written >= max_samples_t)) {
-		    printf("stop #sample = %ld\n", written);
+		    printf("stop #sample = %zu\n", written);
 		    stop = 1;
 		}
 		if (!stop) {
