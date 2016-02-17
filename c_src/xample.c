@@ -85,25 +85,24 @@ sample_t read_sample_spi(int channel)
 }
 
 //  read n (interleaved) samples
-int read_n_samples_spi(int chan0, int chan1, uint16_t delay,
+int read_n_samples_spi(int* selector, size_t nchan, uint16_t delay,
 		       sample_t* samples, size_t n)
 {
   uint8_t rx[3*256];
   uint8_t tx[3*256];
   struct spi_ioc_transfer tr[256];
-  int i, j;
+  int i, j, k;
 
-  if (n > 256) 
-    n = 256;
+  if (n > 256)
+      n = 256;
 
-  for (i = 0, j=0; i < n; i++, j+=3) {
+  for (i = 0, k=0, j=0; i < n; i++, j+=3) {
     tx[j+0] = 1;
-    tx[j+1] = (i & 1) ? ((2+chan1) << 6) : ((2+chan0)<<6);
+    tx[j+1] = (2+selector[k++]) << 6;
     tx[j+2] = 0;
-
+    if (k >= nchan) k = 0;
     tr[i].tx_buf = (unsigned long) &tx[j];
     tr[i].rx_buf = (unsigned long) &rx[j];
-    tr[i].len = 3;
     tr[i].len = 3;
     tr[i].delay_usecs = delay;
     tr[i].speed_hz = SPI_SPEED;
@@ -112,12 +111,84 @@ int read_n_samples_spi(int chan0, int chan1, uint16_t delay,
   }
   if (ioctl(spi_fd, SPI_IOC_MESSAGE(n), &tr) < 0)
     return 0;
-  for (i = 0, j=0; i < n; i++,j+=3)
-    samples[i] = (((rx[j+1] & 0xf)<<8) + rx[j+2])<<4;
+  for (i = 0, j=0; i < n; i++, j+=3) {
+      sample_t v = (((rx[j+1] & 0xf)<<8) + rx[j+2])<<4;
+      samples[i] = v;
+  }
   return n;
 }
 
 #endif
+
+#if defined(USE_HIDAPI)
+
+#include "hidapi.h"
+#define MAX_SERIAL 1024
+static unsigned short hid_vendor  = 0;
+static unsigned short hid_product = 0;
+static char*          hid_serial = NULL;
+static hid_device*    hid_dev = NULL;
+
+int open_hid()
+{
+    char* ptr;
+    int j = 0;
+    wchar_t serial[MAX_SERIAL+1];
+    wchar_t* serp = NULL;
+
+    if ((ptr = hid_serial) != NULL) {
+	while(*ptr && (j < MAX_SERIAL))
+	    serial[j++] = *ptr++;
+    }
+    if (j > 0) {
+	serial[j] = 0;
+	serp = serial;
+    }
+    if ((hid_dev = hid_open(hid_vendor, hid_product, serp)) == NULL)
+	return -1;
+    return 0;
+}
+
+void close_hid(void)
+{
+    hid_close(hid_dev);
+    hid_dev = NULL;
+}
+
+int read_sample_hid(int* selector, sample_t* samples, size_t n)
+{
+    uint8_t buffer[8];
+    int r;
+    if ((r = hid_read(hid_dev, buffer, 8)) == 8) {
+	// uint16_t ts = buffer[0]+buffer[1]*256;
+	int i, j;
+	for (i = 0; i < n; i++) {
+	    if ((j = selector[i]) < 4)
+		samples[i] = (buffer[2+j] << 8);
+	    else
+		samples[i] = 0;
+	}
+	return 0;
+    }
+    return r;
+}
+
+int read_n_samples_hid(int* selector, size_t nchan, uint16_t delay,
+		       sample_t* samples, size_t n)
+{
+    int k = 0;
+    while(n > 0) {
+	read_sample_hid(selector, samples, nchan);
+	n -= nchan;
+	samples += nchan;
+	k += nchan;
+	usleep(delay);  // fixme: pace this
+    }
+    return k;
+}
+
+#endif
+
 
 #define MAX_AMPLITUDE  20000.0
 #define MIN_AMPLITUDE  1000.0
@@ -157,14 +228,17 @@ sample_t read_sample_sim(int channel)
     return (sample_t) (32767+(long)vf);
 }
 
-int read_n_samples_sim(int chan0, int chan1, uint16_t delay,
-		       sample_t* samples, size_t n)
+int read_n_samples_sim(int* selector, size_t nchan,
+		       uint16_t delay, sample_t* samples, size_t n)
 {
-  int i;
+  int i, k = 0;
 
   for (i = 0; i < n; i++) {
-    samples[i] = read_sample_sim((i & 1) ? chan1 : chan0);
-    usleep(delay);  // fixme: pace this
+      samples[i] = read_sample_sim(selector[k++]);
+      if (k >= nchan) {
+	  k = 0;
+	  usleep(delay);  // fixme: pace this
+      }
   }
   return n;
 }
@@ -172,9 +246,18 @@ int read_n_samples_sim(int chan0, int chan1, uint16_t delay,
 void usage(char* prog)
 {
     printf("usage: %s [options] <shm-name>\n", prog);
-    printf("  [-t <secs>]       max buffer time in seconds\n"
-	   "  [-f <freq-hz>]    sample frequency in hertz\n"
-	   "  [-d <frame-div>]  page divider into frames\n");
+    printf("  [-t <secs>]         max buffer time in seconds\n"
+	   "  [-f <freq-hz>]      sample frequency in hertz\n"
+	   "  [-d <frame-div>]    page divider into frames\n"
+	   "  [-k <chunk-size>]   chunk size 1..256 (10)\n"
+	   "  [-c <channels>]     number of channels 1..8\n"
+	   "  [-i <n>]            select spi interface 0 or 1\n"
+	   "  [-s]                run simulated mode\n"
+	   "  [-v <usb-vendor>]   hid mode usb vendor\n"
+	   "  [-p <usb-product>]  hid mode usb product\n"
+	   "  [-S <usb-serial>]   hid mode usb serial\n"
+	   "  [-H <product-name>] hid mode product select\n"
+	);
     exit(1);
 }
 
@@ -203,11 +286,13 @@ int main(int argc, char** argv)
     int i, f, opt;
     size_t fdivpow2 = 2;    // 0 => 2^0 = 1 => frame_size = page_size 
     // sample_t (*read_sample_fn)(int channel) = NULL;
-    int (*read_n_samples_fn)(int, int, uint16_t, sample_t*, size_t) = NULL;
+    int (*read_n_samples_fn)(int*, size_t, uint16_t, sample_t*, size_t) = NULL;
     struct timeval t0, t1;
     size_t chunk_size = DEF_CHUNK_SIZE;
+    size_t nchannels = 1;
+    int    selector[8];
 
-    while ((opt = getopt(argc, argv, "sf:t:d:i:c:")) != -1) {
+    while ((opt = getopt(argc, argv, "sf:t:d:i:c:v:p:S:H:")) != -1) {
 	switch(opt) {
 	case 'f':
 	    sample_freq = atof(optarg);  // sample frequency
@@ -219,6 +304,9 @@ int main(int argc, char** argv)
 	    fdivpow2 = atoi(optarg);
 	    break;
 	case 'c':
+	    nchannels = atoi(optarg);
+	    break;
+	case 'k':
 	  chunk_size = atoi(optarg);
 	  if (chunk_size < MIN_CHUNK_SIZE) 
 	    chunk_size = MIN_CHUNK_SIZE;
@@ -236,6 +324,30 @@ int main(int argc, char** argv)
 	case 's':
 	  read_n_samples_fn = read_n_samples_sim;
 	  break;
+#if defined(USE_HIDAPI)
+	case 'v':
+	    hid_vendor = atoi(optarg);
+	    break;
+	case 'p':
+	    hid_product = atoi(optarg);
+	    break;
+	case 'S':
+	    hid_serial = optarg;
+	    break;
+	case 'H':
+	    if (strcmp(optarg, "usb-recorder") == 0) {
+		hid_vendor = 0x10cf;
+		hid_product = 0x8047;
+		hid_serial  = "";
+	    }
+	    else {
+		fprintf(stderr, "HID device named '%s' not found\n", 
+			optarg);
+		fprintf(stderr, "available: usb-recorder\n");
+		exit(1);
+	    }
+	    break;
+#endif
 	default: /* '?' */
 	    usage(argv[0]);
 	}
@@ -243,6 +355,22 @@ int main(int argc, char** argv)
 
     if (optind >= argc)
 	usage(argv[0]);
+
+    // setup channel selector just a simple one-to-one map for now
+    for (i = 0; i < nchannels; i++)
+	selector[i] = i;
+
+#if defined(USE_HIDAPI)
+    if ((hid_vendor != 0) && (hid_product != 0)) {
+	if (open_hid() < 0) {
+	    perror("open hid");
+	    exit(1);
+	}
+	read_n_samples_fn = read_n_samples_hid;
+	printf("hid device %d:%d:%s is open\n", 
+	       hid_vendor, hid_product, hid_serial?hid_serial:"");
+    }
+#endif
 
 #if defined(__linux__) && defined(MCP3202)
     if (read_n_samples_fn == NULL) {
@@ -253,12 +381,13 @@ int main(int argc, char** argv)
       }
     }
 #endif
+
     max_samples = (size_t)(sample_freq*sample_time);
     udelay = ((unsigned long)(1000000*(1/sample_freq)));
     
     // frame div pow = 2 => (1 << 2) == 4  (four frames per page)
-    if ((xp = xample_create(argv[optind], max_samples, fdivpow2, 
-			    1, sample_freq, 0666,
+    if ((xp = xample_create(argv[optind], max_samples, fdivpow2,
+			    nchannels, sample_freq, 0666,
 			    &sample_buffer)) == NULL) {
 	fprintf(stderr, "unable to create shared memory %s\n", argv[optind]);
 	exit(1);
@@ -297,6 +426,7 @@ int main(int argc, char** argv)
     printf("current_frame = %lu\n", current_frame);
     printf("samples_per_frame = %zu\n", samples_per_frame);
     printf("frames_per_page = %zu\n", frames_per_page);
+    printf("nchannels = %zu\n",  xp->channels);
 
     first_frame_offset = first_frame*samples_per_frame;
     // first_page_offset = first_page*samples_per_page;
@@ -311,15 +441,18 @@ int main(int argc, char** argv)
     while(1) {
       int ns = chunk_size;
       int remain = samples_per_frame - i;
-      sample_t last_sample;
+      sample_t last_sample[8];
       uint16_t delay;
 
       if  (ns > remain)
 	ns = remain;
       delay = (udelay > 65535) ? 65535 : udelay;
-      read_n_samples_fn(0, 0, delay, sample_buffer+frame_offset+i, ns);
+      read_n_samples_fn(selector, nchannels,
+			delay, sample_buffer+frame_offset+i, ns);
       i += ns;
-      last_sample = sample_buffer[frame_offset+i-1];
+
+      memcpy(last_sample, &sample_buffer[frame_offset+i-1], 
+	     sizeof(sample_t)*nchannels);
 
       if (i >= samples_per_frame) {
 	nsamples += samples_per_frame;
@@ -337,7 +470,7 @@ int main(int argc, char** argv)
 	  
 	  td = (t1.tv_sec-t0.tv_sec)*1000000+(t1.tv_usec-t0.tv_usec);
 	  printf("Hz = %f\n", ((double)nsamples/(double) td)*1000000.0);
-	  printf("last_sample = %u\n", last_sample);
+	  printf("last_sample = %u\n", last_sample[0]);
 	  nsamples = 0;
 	  t0 = t1;
 	}
@@ -352,6 +485,5 @@ int main(int argc, char** argv)
 	}
 	xp->current_frame = current_frame;
       }
-      // usleep(udelay);
     }
 }

@@ -82,8 +82,8 @@ typedef struct {
 } trigger_t;    
 
 // create data stream 
-extern xample_t* xample_create(char* name, size_t nsamples, 
-			       size_t nchannels, size_t fdivpow2,
+extern xample_t* xample_create(char* name, size_t nsamples, size_t fdivpow2,
+			       size_t nchannels,
 			       double rate, mode_t mode, sample_t** data);
 // open data stream for read
 extern xample_t* xample_open(char* name, sample_t** data);
