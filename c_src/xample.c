@@ -84,7 +84,7 @@ sample_t read_sample_spi(int channel)
     return v << 4;  // scale to 16 bit
 }
 
-//  read n (interleaved) samples
+//  read n (nchan interleaved) samples
 int read_n_samples_spi(int* selector, size_t nchan, uint16_t delay,
 		       sample_t* samples, size_t n)
 {
@@ -92,11 +92,12 @@ int read_n_samples_spi(int* selector, size_t nchan, uint16_t delay,
   uint8_t tx[3*256];
   struct spi_ioc_transfer tr[256];
   int i, j, k;
+  uint16_t delay1 = delay / nchan;
 
   if (n > 256)
       n = 256;
 
-  for (i = 0, k=0, j=0; i < n; i++, j+=3) {
+  for (i=0,j=0,k=0; i < n; i++,j+=3) {
     tx[j+0] = 1;
     tx[j+1] = (2+selector[k++]) << 6;
     tx[j+2] = 0;
@@ -104,14 +105,14 @@ int read_n_samples_spi(int* selector, size_t nchan, uint16_t delay,
     tr[i].tx_buf = (unsigned long) &tx[j];
     tr[i].rx_buf = (unsigned long) &rx[j];
     tr[i].len = 3;
-    tr[i].delay_usecs = delay;
+    tr[i].delay_usecs = delay1;
     tr[i].speed_hz = SPI_SPEED;
     tr[i].bits_per_word = 8;
     tr[i].cs_change = 1;
   }
   if (ioctl(spi_fd, SPI_IOC_MESSAGE(n), &tr) < 0)
     return 0;
-  for (i = 0, j=0; i < n; i++, j+=3) {
+  for (i=0,j=0; i < n; i++,j+=3) {
       sample_t v = (((rx[j+1] & 0xf)<<8) + rx[j+2])<<4;
       samples[i] = v;
   }
@@ -231,13 +232,13 @@ sample_t read_sample_sim(int channel)
 int read_n_samples_sim(int* selector, size_t nchan,
 		       uint16_t delay, sample_t* samples, size_t n)
 {
-  int i, k = 0;
+  int i,k;
 
-  for (i = 0; i < n; i++) {
+  for (i=0,k=0; i < n; i++) {
       samples[i] = read_sample_sim(selector[k++]);
       if (k >= nchan) {
 	  k = 0;
-	  usleep(delay);  // fixme: pace this
+	  usleep(delay);
       }
   }
   return n;
@@ -441,7 +442,6 @@ int main(int argc, char** argv)
     while(1) {
       int ns = chunk_size;
       int remain = samples_per_frame - i;
-      sample_t last_sample[8];
       uint16_t delay;
 
       if  (ns > remain)
@@ -451,8 +451,8 @@ int main(int argc, char** argv)
 			delay, sample_buffer+frame_offset+i, ns);
       i += ns;
 
-      memcpy(last_sample, &sample_buffer[frame_offset+i-1], 
-	     sizeof(sample_t)*nchannels);
+//      memcpy(last_sample, &sample_buffer[frame_offset+i-1],
+//            sizeof(sample_t)*nchannels);
 
       if (i >= samples_per_frame) {
 	nsamples += samples_per_frame;
@@ -469,8 +469,9 @@ int main(int argc, char** argv)
 	  gettimeofday(&t1, NULL);
 	  
 	  td = (t1.tv_sec-t0.tv_sec)*1000000+(t1.tv_usec-t0.tv_usec);
-	  printf("Hz = %f\n", ((double)nsamples/(double) td)*1000000.0);
-	  printf("last_sample = %u\n", last_sample[0]);
+	  printf("Hz = %f\n", 
+		 (((double)nsamples/nchannels)/(double) td)*1000000.0);
+	  printf("last_sample = %u\n", sample_buffer[frame_offset+i-ns]);
 	  nsamples = 0;
 	  t0 = t1;
 	}

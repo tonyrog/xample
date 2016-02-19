@@ -130,12 +130,14 @@ void draw_samples(state_t* sp, xample_t* xp, unsigned long frame,
     
     // just draw one frame for now
     while((i < samples_per_frame) && (i < GRID_WIDTH)) {
-	int ys = (65535-sample_buffer[frame_offset+i]);
-	int y;
-	
-	y = GRID_TOP + ((ys*GRID_HEIGHT) >> 16);
-	epx_pixmap_put_pixel(sp->px, x, y, 0, epx_pixel_black);
-	i++;
+	int k;
+	for (k = 0; k < xp->channels; k++) {
+	    int ys = (65535-sample_buffer[frame_offset+i]);
+	    int y;
+	    y = GRID_TOP + ((ys*GRID_HEIGHT) >> 16);
+	    epx_pixmap_put_pixel(sp->px, x, y, 0, epx_pixel_black);
+	    i++;
+	}
 	x++;
     }
 
